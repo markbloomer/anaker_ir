@@ -39,9 +39,9 @@ const ftpOptions={
   // host: "home283637480.1and1-data.host",
   // user: "ftp35522565-2",
   // password: en.decrypt("caa6db22ab75ac60f8bf996313aa67f635a97d4a02315e040ed614d3e7c7a6b5", fs.readFileSync("./_secret.txt", "utf-8")),
-  host: "192.168.1.103",
+  host: "ftp.anaker.com",
   user: "anaker_ir",
-  password: "xxx",//en.decrypt("", fs.readFileSync("./_secret.txt", "utf-8")),
+  password: en.decrypt("25c5c612cb64e5953cf863048df9bfe698cc8627e564efd90e43493f1d9574ae", fs.readFileSync("./_secret.txt", "utf-8")),
   secure: true,
   secureOptions: { rejectUnauthorized: false }
 };
