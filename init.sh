@@ -1,4 +1,6 @@
 #!/bin/sh
-apt update -q
-apt upgrade -q
-apt install nodejs -q
+apt -qq -y update
+apt -qq -y upgrade
+apt -qq -y install nodejs npm libcamera-apps-lite
+#
+apt -qq -y autoremove
