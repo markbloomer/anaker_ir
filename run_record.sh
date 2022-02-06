@@ -1,6 +1,5 @@
 #!/bin/sh
 clear
-rm -rf ./raw/* ./bak/*
 #
 libcamera-vid \
   -o - \
@@ -15,12 +14,13 @@ libcamera-vid \
   -i - \
   -y \
   -c:v copy \
-  -map 0:0 \
   -f ssegment \
   -segment_time 10 \
   -segment_format mpegts \
   -strftime 1 \
   ./raw/%Y.%m.%d_%H.%M.%S.ts
+#-vf "drawtext=text=this is a \\\\\\'string\\\\\\'\\\\: may contain one\\, or more\\, special characters" \
+#-map 0:0 \
 
   # -f ssegment \
   # -segment_time 10 \

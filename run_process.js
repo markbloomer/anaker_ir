@@ -5,7 +5,7 @@ const en=require("./encrypt.js");
 //const
 const rawPath="./raw";
 const bakPath="./bak";
-const ftpPath="/ftp35522565-2"; //"/";
+const ftpPath="";//"/ftp35522565-2";
 const maxUsed=11;
 //util
 const t=(ms, f)=>new Promise((r)=>ms?!setTimeout(()=>r(f()), ms):r(f()));
@@ -27,16 +27,16 @@ const purge=(path)=>{
   setTimeout(()=>purge(path), 3000);
 };
 const ftpOptions={
-  host: "home283637480.1and1-data.host",
-  user: "ftp35522565-2",
-  password: en.decrypt("caa6db22ab75ac60f8bf996313aa67f635a97d4a02315e040ed614d3e7c7a6b5", fs.readFileSync("./_secret.txt", "utf-8")),
-  // host: "ftp.anaker.com",
-  // user: "anaker_ir",
-  // password: en.decrypt("25c5c612cb64e5953cf863048df9bfe698cc8627e564efd90e43493f1d9574ae", fs.readFileSync("./_secret.txt", "utf-8")),
+  // host: "home283637480.1and1-data.host",
+  // user: "ftp35522565-2",
+  // password: en.decrypt("caa6db22ab75ac60f8bf996313aa67f635a97d4a02315e040ed614d3e7c7a6b5", fs.readFileSync("./_secret.txt", "utf-8")),
+  host: "192.168.1.103",
+  user: "anaker_ir_dev",
+  password: en.decrypt("25c5c612cb64e5953cf863048df9bfe698cc8627e564efd90e43493f1d9574ae", fs.readFileSync("./_secret.txt", "utf-8")),
   secure: true,
   secureOptions: { rejectUnauthorized: false }
 };
-const ftpUpload=async (fromPath, toPath)=>{
+const ftpUpload=async(fromPath, toPath)=>{
   try {
     const client=new ftp.Client();
     await client.access(ftpOptions);
@@ -67,39 +67,37 @@ const ftpUpload=async (fromPath, toPath)=>{
 // };
 const add=(files, file)=>{ files.push(file); files.sort().reverse(); };
 const rem=(files, file, index=files.indexOf(file))=>{ if (index>=0) files.splice(index, 1); };
-const action=async (path, files, addActions=[], remActions=[])=>{
-  // console.log("=================");
-  // console.log("[used "+used()+"%]");
+const action=async(path, files, addAction=async()=>{}, remAction=async()=>{})=>{
   const dirFiles=fs
     .readdirSync(path)
     .sort()
     .reverse()
-    .filter((file, i, a)=>i<a.length-1); //remove last
+    .filter((file, i)=>i);
   const addFiles=dirFiles
     .filter((file)=>!files.includes(file))
     .map((file)=>add(files, file) || file);
   const remFiles=files
     .filter((file)=>!dirFiles.includes(file))
     .map((file)=>rem(files, file) || file);
-  //console.log("dirFiles: "+JSON.stringify(dirFiles, null, 2));
-  //console.log("addFiles: "+JSON.stringify(addFiles, null, 2));
-  //console.log("remFiles: "+JSON.stringify(remFiles, null, 2));
-  for (const action of addActions) await action(addFiles);
-  for (const action of remActions) await action(remFiles);
+  await addAction(addFiles);
+  await remAction(remFiles);
 };
-const uploadAndMoveAction=async (addFiles)=>{
-  for (const file of addFiles) {
+const uploadAndMoveAction=async(files)=>{
+  for (const file of files) {
     console.log("uploading "+file);
-    const success=true;//await ftpUpload(rawPath+"/"+file, ftpPath+"/"+file);
+    const success=await ftpUpload(rawPath+"/"+file, ftpPath+"/"+file);
     if (!success) break;
     console.log(" uploaded "+file);
     fs.renameSync(rawPath+"/"+file, bakPath+"/"+file);
-    console.log("   backup "+file);
+    //console.log("mv "+rawPath+"/"+file+" "+bakPath+"/"+file);
+    //child.execSync("mv "+rawPath+"/"+file+" "+bakPath+"/"+file, "utf-8");
+    console.log("     move "+file+" "+rawPath+" => "+bakPath);
+    console.log("[used "+used()+"%]");
   }
 };
-//const purgeAction=async (files, addFiles, remFiles)=>purge(rawPath);
+//const purgeAction=async(files, addFiles, remFiles)=>purge(rawPath);
 //
-fs.watch(rawPath, "utf-8", async (event, file, files=[])=>event==="rename" && await action(rawPath, files, [uploadAndMoveAction]));
+fs.watch(rawPath, "utf-8", async(event, file, files=[])=>event==="rename" && await action(rawPath, files, uploadAndMoveAction));
 console.log(" watching "+rawPath);
-fs.watch(bakPath, "utf-8", async (event, file, files=[])=>event==="rename" && await action(bakPath, files));
+fs.watch(bakPath, "utf-8", async(event, file, files=[])=>event==="rename" && await action(bakPath, files));
 console.log(" watching "+bakPath);
