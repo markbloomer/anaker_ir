@@ -1,4 +1,5 @@
-bak
 node_modules
+public
 raw
-_*
+raw_m3u8
+_secret.txt

@@ -1,24 +1,25 @@
 #!/bin/sh
 clear
-#
 libcamera-vid \
-  -o - \
+  --tuning-file /usr/share/libcamera/ipa/raspberrypi/imx219_noir.json \
   --nopreview \
   --timeout 0 \
-  --intra 1 \
-  --width 1024 \
-  --height 768 \
-  --framerate 30 \
-  --tuning-file ./imx219_noir.json \
+  --width 1280 \
+  --height 1024 \
+  -o - \
 | ffmpeg \
   -i - \
-  -y \
-  -c:v copy \
+  -codec:v copy \
   -f ssegment \
   -segment_time 10 \
   -segment_format mpegts \
+  -segment_list ./raw_m3u8/stream.m3u8 \
+  -segment_list_size 720 \
+  -segment_list_flags live \
+  -segment_list_type m3u8 \
   -strftime 1 \
   ./raw/%Y.%m.%d_%H.%M.%S.ts
+
 #-vf "drawtext=text=this is a \\\\\\'string\\\\\\'\\\\: may contain one\\, or more\\, special characters" \
 #-map 0:0 \
 
