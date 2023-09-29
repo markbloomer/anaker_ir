@@ -1,6 +1,8 @@
 {
   "dependencies": {
     "basic-ftp": "^4.6.6",
-    "hls.js": "^1.1.5"
+    "ffmpeg": "^0.0.4",
+    "hls.js": "^1.1.5",
+    "serialport-gsm": "^4.0.1"
   }
 }

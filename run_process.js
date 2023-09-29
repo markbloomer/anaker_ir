@@ -1,15 +1,17 @@
+#!/usr/bin/env node
 const fs=require("fs");
 const child=require("child_process");
 const ftp=require("basic-ftp");
+const ffmpeg=require("ffmpeg");
 const en=require("./encrypt.js");
 // const _=require("./_.js");
 // const f=require("./_f.js");
 //const
 const rawPath="./raw";
-const m3u8Path="./raw_m3u8/stream.m3u8";
+const rawImgPath="./raw_img";
 const bakPath="./bak";
-const ftpPath="";//"/ftp35522565-2";
-const maxUsed=75; //percent
+const ftpPath="/";//"//ftp35522565-2";
+const maxUsed=90; //percent
 const timeout=8000; //milliseconds
 //util
 const t=(ms, f)=>new Promise((r)=>ms?!setTimeout(()=>r(f()), ms):r(f()));
@@ -25,21 +27,30 @@ const elapsed=async(maxTime, func)=>{
   await func(()=>Date.now()-startTime>maxTime);
   return Date.now()-startTime;
 };
-const purge=(path)=>{
+const purge=()=>{
   const currUsed=used();
+  console.log(`[used ${currUsed}%]`);
   if (currUsed<=maxUsed) return;
-  //console.log("[used "+currUsed+"%]");
-  const file=getFiles(path).shift();
-  if (!file) return;
-  console.log("  purging "+file);
-  fs.unlinkSync(path+"/"+file);
-  console.log("   purged "+file);
+  const files=[rawPath, rawImgPath]
+    .map((path)=>({
+      path,
+      file: getFiles(path).shift()
+    }));
+  files.forEach((f)=>{
+    if (!f.file) return;
+    console.log(`purge ${f.file}...`);
+    fs.unlinkSync(`${f.path}/${f.file}`);
+    console.log(`purge ${f.file}`);
+  });
 };
 const ftpOptions={
+  // host: "192.168.43.254",
+  // user: "anaker_ir",
+  // password: "hellohello",
   // host: "home283637480.1and1-data.host",
-  // user: "ftp35522565-2",
+  // user: "/ftp35522565-2",
   // password: en.decrypt("caa6db22ab75ac60f8bf996313aa67f635a97d4a02315e040ed614d3e7c7a6b5", fs.readFileSync("./_secret.txt", "utf-8")),
-  host: "192.168.1.103",
+  host: "192.168.1.253",
   user: "anaker_ir_dev",
   password: en.decrypt("25c5c612cb64e5953cf863048df9bfe698cc8627e564efd90e43493f1d9574ae", fs.readFileSync("./_secret.txt", "utf-8")),
   secure: true,
@@ -110,9 +121,42 @@ const sideBySide=(leftFiles, rightFiles)=>{
     else if (right) console.log(` - ${fill("", 20, "_")}  + ${fill(right, 20)}`);
   }
 };
-fs.watch(rawPath, "utf-8", async(e)=>{
+const p=(f)=>new Promise((y, n)=>f(y, n));
+//const e=(f)=>p((y, n)=>{ try { y(f()); } catch (e) { n(e); } });
+// const ffmpeg_low=(fileFrom, fileTo)=>{
+//   new ffmpeg(fileFrom)
+//     .then((video)=>{
+//       video
+//         .setVideoSize("160x?", true, true, "#000000")
+//         .save(fileTo, (error, file)=>{ if (!error) console.log(`saved ${file}`); });
+//     }, (e)=>console.log(`Error: ${e}`));
+// };
+const ffmpeg_low=(fileFrom, folderTo, fileNameTo)=>p((y, n)=>new ffmpeg(fileFrom)
+  .then((video)=>video
+    .setVideoSize("160x?", true, true)
+    .save(`${folderTo}/${fileNameTo}`, (e, files)=>e?n(e):y(files))));
+const ffmpeg_img=(fileFrom, folderTo, fileNameTo)=>p((y, n)=>new ffmpeg(fileFrom)
+  .then((video)=>video
+    .fnExtractFrameToJPG(folderTo, {
+      frame_rate: 1,
+      number: 1,
+      file_name: fileNameTo
+    }, (e, files)=>e?n(e):y(files))));
+  //.setVideoSize("160x?", true, true)
+  //.save(fileTo, (e, file)=>e?n(e):y(file)));
+let files=getFiles(rawPath);
+const run=async(e)=>{
   if (e!=="rename") return;
-  console.log("###");
+  const filesNow=getFiles(rawPath);
+  const filesAdd=filesNow.filter((fileNow)=>!files.includes(fileNow));
+  //const filesRem=files.filter((file)=>!filesNow.includes(file));
+  files=filesNow;
+  if (!filesAdd.length) return;
+  //console.log(`  added ${JSON.stringify(filesAdd)}`);
+  //console.log(`removed ${JSON.stringify(filesRem)}`);
+  console.log("###...");
+  purge();
+  purge();
   const client=new ftp.Client();
   //client.ftp.verbose=true;
   try {
@@ -121,23 +165,38 @@ fs.watch(rawPath, "utf-8", async(e)=>{
     //   .map((file)=>file.name)
     //   .sort()
     //   .reverse();
-    const localFiles=fs
-      .readdirSync(`./raw`)
-      .sort()
-      .reverse();
+    const reverseFiles=[...files].reverse();
     //sideBySide(localFiles, remoteFiles);
-    const file=localFiles.length>1?localFiles[1]:null;
+    reverseFiles.shift();
+    const file=reverseFiles.shift();
     if (file) {
+      // const fileImg=`${file}.jpg`;
+      // console.log(`img ${fileImg}...`);
+      // await ffmpeg_img(`${rawPath}/${file}`, rawImgPath, fileImg);
+      // fs.renameSync(`${rawImgPath}/${`${file}_1.jpg`}`, `${rawImgPath}/${fileImg}`);
+      // console.log(`img ${fileImg}`);
+      // console.log(`upload ${fileImg}...`);
+      // await client.uploadFrom(`${rawImgPath}/${fileImg}`, `/public/img/${fileImg}`);
+      // console.log(`upload ${fileImg}`);
+      // console.log(`low ${file}...`);
+      // await ffmpeg_low(`${rawPath}/${file}`, `./raw_low`, file);
+      // console.log(`low ${file}`);
+      console.log(`upload ${file}...`);
+      await client.uploadFrom(`${rawPath}/${file}`, `/public/${file}`);
       console.log(`upload ${file}`);
-      await client.uploadFrom(`./raw/${file}`, `/public/${file}`);
-      //await wait(1000);
-      console.log(`upload stream.m3u8`);
+      console.log(`upload stream.m3u8...`);
       await client.uploadFrom(`./raw_m3u8/stream.m3u8`, `/public/stream.m3u8`);
-      console.log(`upload index.html`);
+      console.log(`upload stream.m3u8`);
+      console.log(`upload index.html...`);
       await client.uploadFrom(`./index.html`, `/public/index.html`);
+      console.log(`upload index.html`);
     }
   }
   catch(err) { console.log(err); }
   client.close();
-});
-console.log(" watching "+rawPath);
+  console.log("###");
+};
+fs.watch(rawPath, "utf-8", run);
+console.log(` watching ${rawPath}`);
+//ffmpeg_lo("./raw/2022.04.22_15.14.13.ts", "./raw/2022.04.22_15.14.13_lo.ts");
+//ffmpeg_img("/home/pi/anaker_ir/raw/2023.09.24_18.24.36.ts", "/home/pi/anaker_ir/raw", "2023.09.24_18.24.36.ts.img");

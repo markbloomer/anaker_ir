@@ -1,5 +1,6 @@
 #!/bin/sh
 clear
+#rm -rf ./raw/* ./raw_img/* ./raw_low/* ./raw_m3u8/*
 libcamera-vid \
   --tuning-file /usr/share/libcamera/ipa/raspberrypi/imx219_noir.json \
   --nopreview \
@@ -36,7 +37,7 @@ libcamera-vid \
   # ./raw/%Y.%m.%d_%H.%M.%S.png
 
 
-#  -segment_list "./raw/stream.m3u8" \
+# -segment_list "./raw/stream.m3u8" \
 # -segment_list_size 720 \
 # -segment_list_flags live \
 # -segment_list_type m3u8 \

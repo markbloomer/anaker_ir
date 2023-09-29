@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const child=require("child_process")
+const child=require("child_process");
 const fs=require("fs");
 const libcamera=child.spawn("libcamera-vid", [
   "--nopreview",
