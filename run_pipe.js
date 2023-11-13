@@ -1,25 +1,29 @@
 #!/usr/bin/env node
 const child=require("child_process");
-const fs=require("fs");
 const libcamera=child.spawn("libcamera-vid", [
-  "--nopreview",
-  "--output ~/anaker_ir/raw/out.h264",
-  "--timeout 0",
-  "--intra 1",
-  "--width 1024",
-  "--height 768",
-  "--framerate 30",
   "--tuning-file /usr/share/libcamera/ipa/raspberrypi/imx219_noir.json",
-  "--verbose",
+  "--nopreview",
+  "--timeout 0",
+  "--width 1280",
+  "--height 1024",
+  "-o -"
 ]);
-const file=fs.createWriteStream("out.txt");
+const ffmpeg=child.spawn("ffmpeg", [
+  "-i -",
+  "-codec:v copy",
+  "-f ssegment",
+  "segment_time 10",
+  "-segment_format mpegts",
+  "-segment_list ./raw_m3u8/stream.m3u8",
+  "-segment_list_flags live",
+  "-segment_list_type m3u8",
+  "-strftime 1",
+  "./raw/%Y.%m.%d_%H.%M.%S.ts"
+]);
 
-libcamera.stdout.pipe(process.stdout, { end: false });
-libcamera.stdout.pipe(file);
+libcamera.on("end", ()=>process.stdout.write("libcamera ended"));
+libcamera.on("exit", ()=>process.stdout.write("libcamera exited"));
+ffmpeg.on("end", ()=>process.stdout.write("ffmpeg ended"));
+ffmpeg.on("exit", ()=>process.stdout.write("ffmpeg exited"));
 
-process.stdin.resume();
-process.stdin.pipe(libcamera.stdin, { end: false });
-process.stdin.pipe(file);
-
-libcamera.stdin.on("end", ()=>process.stdout.write("REPL stream ended."));
-libcamera.on("exit", (code)=>process.exit(code));
+libcamera.stdout.pipe(ffmpeg.in);

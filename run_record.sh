@@ -1,6 +1,6 @@
 #!/bin/sh
 clear
-#rm -rf ./raw/* ./raw_img/* ./raw_low/* ./raw_m3u8/*
+rm -rf ./raw/* ./raw_ts/* ./raw_img/* ./raw_low/* ./raw_m3u8/* ./public/*
 libcamera-vid \
   --tuning-file /usr/share/libcamera/ipa/raspberrypi/imx219_noir.json \
   --nopreview \
@@ -15,11 +15,10 @@ libcamera-vid \
   -segment_time 10 \
   -segment_format mpegts \
   -segment_list ./raw_m3u8/stream.m3u8 \
-  -segment_list_size 720 \
   -segment_list_flags live \
   -segment_list_type m3u8 \
   -strftime 1 \
-  ./raw/%Y.%m.%d_%H.%M.%S.ts
+  ./raw_ts/%Y.%m.%d_%H.%M.%S.ts
 
 #-vf "drawtext=text=this is a \\\\\\'string\\\\\\'\\\\: may contain one\\, or more\\, special characters" \
 #-map 0:0 \
