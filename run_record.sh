@@ -1,8 +1,8 @@
 #!/bin/sh
 clear
-rm -rf ./raw/* ./raw_ts/* ./raw_img/* ./raw_low/* ./raw_m3u8/* ./public/*
+rm -rf ./raw_ts/* ./raw_m3u8/*
 libcamera-vid \
-  --tuning-file /usr/share/libcamera/ipa/raspberrypi/imx219_noir.json \
+  --tuning-file /usr/share/libcamera/ipa/rpi/vc4/imx219_noir.json \
   --nopreview \
   --timeout 0 \
   --width 1280 \
