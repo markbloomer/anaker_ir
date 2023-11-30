@@ -11,8 +11,21 @@ const used=(sleep=0.25)=>{
   const usedStr=out.substring(out.indexOf("\n"), out.lastIndexOf("%")).trim();
   return Number(usedStr);
 };
+const timeout=(func, ms=30*1000)=>{
+  let isExpired=false;
+  return (x)=>{
+    isExpired=false;
+    const t=setTimeout(()=>isExpired=true, ms);
+    const oot=(task, rejectTask=(x)=>x)=>
+      (x)=>isExpired
+        ?Promise.resolve(x).then(rejectTask).then(()=>Promise.reject())
+        :Promise.resolve(x).then(task);
+    return Promise.resolve(x).then((x)=>func(x, oot)).then((x)=>clearTimeout(t) || x);
+  };
+};
 //const
 const maxUsed=90;
+const ms=3000;
 const rawTsPath=`./raw_ts`;
 const rawM3uPath=`./raw_m3u8`;
 const publicPath=`./public`;
@@ -108,22 +121,6 @@ const checkDriveSpacePurgeOldest=(prev)=>{
   fs.unlinkSync(publicFilePath);
   return prev;
 };
-//upload files
-const uploadFiles=(prev)=>{
-  const { file, fileSize, folder, dayFolder, publicFilePath, dayStreamFilePath }=prev;
-  return Promise.resolve()
-    .then(()=>!ftp.closed?null:console.log(`reconnecting...`) || ftp.access(ftpOptions))
-    .then(()=>ftp.ensureDir(`/${folder}`))
-    .then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.uploadRemainSize=fileSize-bytes}`)))
-    .then(()=>console.log(`uploading ${file}`) || ftp.uploadFrom(publicFilePath, `/${folder}/${file}`))
-    .then(()=>ftp.trackProgress())
-    .then(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`))
-    .then(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`))
-    .then(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`))
-    .then(()=>prev)
-    .catch((e)=>console.error(e))
-    .finally(()=>console.log(`uploading done`));
-};
 //update live stream
 const updateLiveStream=(prev)=>{
   const liveStream=state.entries.reduce((stream, { fileSize, liveEntry })=>stream+(fileSize>0?liveEntry:""), streamHeader);
@@ -150,11 +147,26 @@ const updateDayStream=(prev)=>{
 const copyPublic=()=>{
   fs.cpSync(publicStaticPath, publicPath, { recursive: true });
 };
+//upload files
+const uploadFiles=(prev, oot=(x)=>x)=>new Promise((resolve, reject)=>{
+  const { file, fileSize, folder, dayFolder, publicFilePath, dayStreamFilePath }=prev;
+  return Promise.resolve()
+    .then(oot(()=>!ftp.closed?null:console.log(`reconnecting...`) || ftp.access(ftpOptions)))
+    .then(oot(()=>ftp.ensureDir(`/${folder}`)))
+    .then(()=>ftp.trackProgress(oot(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.uploadRemainSize=fileSize-bytes}`))))
+    .then(oot(()=>console.log(`uploading ${file}`) || ftp.uploadFrom(publicFilePath, `/${folder}/${file}`), ()=>ftp.trackProgress()))
+    .then(()=>ftp.trackProgress())
+    .then(oot(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`)))
+    .then(oot(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`)))
+    .then(oot(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`)))
+    .then(()=>console.log(`uploading done`) || resolve(prev))
+    .catch((e)=>(e?console.error(e):null) || reject());
+});
 //watch stream
 const watchStream=()=>{
   fs.closeSync(fs.openSync(rawStreamFilePath, "w"));
   console.log(`watching ${rawStreamFilePath}`);
-  fs.watchFile(rawStreamFilePath, { interval: 200 }, ()=>{
+  fs.watchFile(rawStreamFilePath, { interval: 200 }, timeout((_, oot)=>{
     console.log(`####################...`);
     return Promise.resolve()
       .then(parseStreamEntry)
@@ -166,11 +178,11 @@ const watchStream=()=>{
       .then(endPrevDayStream)
       .then(updateDayStream)
       .then(updateLiveStream)
-      .then(uploadFiles)
+      .then(oot((prev)=>uploadFiles(prev, oot), saveState))
       .then(saveState)
       .catch((e)=>e?console.error(e):console.log(`break`))
       .finally(()=>console.log(`####################`));
-  });
+  }, ms));
 };
 //init
 Promise.resolve()
