@@ -1,6 +1,6 @@
 #!/bin/sh
 clear
-#rm -rf ./raw_m3u8/*
+rm -rf ./raw_m3u8/* ./raw_ts/* ./public/*
 libcamera-vid \
   --tuning-file /usr/share/libcamera/ipa/rpi/vc4/imx219_noir.json \
   --nopreview \

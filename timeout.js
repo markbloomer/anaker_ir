@@ -2,7 +2,7 @@ const _={
   p: (f)=>new Promise((y, n)=>f(y, n)),
   t: (x, f=()=>{}, ms=1000)=>_.p((y)=>{ f(); setTimeout(()=>y(x), ms); })
 };
-const timeout=(func, ms=30*1000)=>{
+const timeout=(func, ms=2000)=>{
   let isExpired=false;
   return (x)=>{
     isExpired=false;

@@ -11,21 +11,19 @@ const used=(sleep=0.25)=>{
   const usedStr=out.substring(out.indexOf("\n"), out.lastIndexOf("%")).trim();
   return Number(usedStr);
 };
-const timeout=(func, ms=30*1000)=>{
+const timeout=(func, ms=30*1000, timeout=null)=>(...args)=>{
+  if (timeout) return timeout=clearTimeout(timeout);
   let isExpired=false;
-  return (x)=>{
-    isExpired=false;
-    const t=setTimeout(()=>isExpired=true, ms);
-    const oot=(task, rejectTask=(x)=>x)=>
-      (x)=>isExpired
-        ?Promise.resolve(x).then(rejectTask).then(()=>Promise.reject())
-        :Promise.resolve(x).then(task);
-    return Promise.resolve(x).then((x)=>func(x, oot)).then((x)=>clearTimeout(t) || x);
-  };
+  timeout=setTimeout(()=>isExpired=true, ms);
+  const oot=(task=(x)=>x)=>(x)=>isExpired?Promise.resolve(x).then(task).then(()=>Promise.reject()):Promise.resolve(x);
+  return Promise.resolve()
+    .then(()=>func(oot, ...args))
+    .catch((e)=>e?console.error(e):null)
+    .finally(()=>timeout=clearTimeout(timeout));
 };
 //const
 const maxUsed=90;
-const ms=3000;
+const ms=8000;
 const rawTsPath=`./raw_ts`;
 const rawM3uPath=`./raw_m3u8`;
 const publicPath=`./public`;
@@ -46,6 +44,7 @@ const ftpOptions={
 };
 const state={};
 const ftp=new basicFtp.Client(0);
+//ftp.ftp.verbose=true;
 //tasks
 //read state; generate entries
 const readState=()=>{
@@ -63,12 +62,15 @@ const saveState=(prev)=>{
   return prev;
 };
 //extract file, otherwise skip
-const parseStreamEntry=()=>readLastLines
-  .read(rawStreamFilePath, 5)
+const parseStreamEntry=()=>Promise.resolve()
+  .then(()=>readLastLines.read(rawStreamFilePath, 5))
   .then((lines)=>new Promise((resolve, reject)=>{
     const [, fileDuration, file]=lines.match(/#EXTINF:(\d+\.\d+),\n(.+)\n(#EXT-X-ENDLIST\n)?/m)??[];
-    return file?resolve({ file, fileDuration, fileSize: 0, uploadRemainSize: 0 }):reject();
+    if (file) return resolve({ file, fileDuration, fileSize: 0, uploadRemainSize: 0 });
+    console.log(`none`);
+    reject();
   }));
+  //.catch((e)=>console.error(e));
 //extract date and time; init entry
 const createEntry=({ file, fileDuration, fileSize, uploadRemainSize })=>{
   const [, year, month, day, hour, minute]=file.match(/(\d+)\.(\d+)\.(\d+)_(\d+)\.(\d+)\.(\d+)\.(.+)/m);
@@ -151,38 +153,42 @@ const copyPublic=()=>{
 const uploadFiles=(prev, oot=(x)=>x)=>new Promise((resolve, reject)=>{
   const { file, fileSize, folder, dayFolder, publicFilePath, dayStreamFilePath }=prev;
   return Promise.resolve()
-    .then(oot(()=>!ftp.closed?null:console.log(`reconnecting...`) || ftp.access(ftpOptions)))
-    .then(oot(()=>ftp.ensureDir(`/${folder}`)))
-    .then(()=>ftp.trackProgress(oot(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.uploadRemainSize=fileSize-bytes}`))))
-    .then(oot(()=>console.log(`uploading ${file}`) || ftp.uploadFrom(publicFilePath, `/${folder}/${file}`), ()=>ftp.trackProgress()))
-    .then(()=>ftp.trackProgress())
-    .then(oot(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`)))
-    .then(oot(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`)))
-    .then(oot(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`)))
-    .then(()=>console.log(`uploading done`) || resolve(prev))
-    .catch((e)=>(e?console.error(e):null) || reject());
+    .then(oot()).then(()=>ftp.closed?(console.log(`reconnecting...`) || ftp.access(ftpOptions)):null)
+    .then(oot()).then(()=>ftp.ensureDir(`/${folder}`))
+    .then(oot()).then(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`))
+    .then(oot()).then(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`))
+    .then(oot()).then(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`))
+    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.uploadRemainSize=fileSize-bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
+    .then(oot()).then(()=>new Promise((resolve, reject)=>{
+      console.log(`uploading ${file}`);
+      const readStream=fs.createReadStream(publicFilePath)
+        .on("error", (e)=>console.log(`readStream error: ${e}`));
+      ftp.uploadFrom(readStream, `/${folder}/${file}`)
+        .then(()=>readStream.close(resolve))
+        .catch((e)=>e=="Error: User closed client during task"?reject():(console.error(e) || reject(e)));
+    }))
+    .then(oot()).then(()=>ftp.trackProgress(), ()=>ftp.trackProgress())
+    .then(oot()).then(()=>console.log(`uploading done`) || resolve(prev))
+    .catch((e)=>(e?console.error(e):console.error(`upload timeout`)) || reject());
 });
 //watch stream
 const watchStream=()=>{
-  fs.closeSync(fs.openSync(rawStreamFilePath, "w"));
   console.log(`watching ${rawStreamFilePath}`);
-  fs.watchFile(rawStreamFilePath, { interval: 200 }, timeout((_, oot)=>{
-    console.log(`####################...`);
-    return Promise.resolve()
-      .then(parseStreamEntry)
-      .then(createEntry)
-      .then(addCurrGetPrev)
-      .then(makeFolderMoveFile)
-      .then(saveState)
-      .then(checkDriveSpacePurgeOldest)
-      .then(endPrevDayStream)
-      .then(updateDayStream)
-      .then(updateLiveStream)
-      .then(oot((prev)=>uploadFiles(prev, oot), saveState))
-      .then(saveState)
-      .catch((e)=>e?console.error(e):console.log(`break`))
-      .finally(()=>console.log(`####################`));
-  }, ms));
+  fs.watchFile(rawStreamFilePath, { interval: 200 }, timeout((oot)=>Promise.resolve()
+    .then(()=>console.log(`####################...`))
+    .then(parseStreamEntry)
+    .then(createEntry)
+    .then(addCurrGetPrev)
+    .then(makeFolderMoveFile)
+    .then(checkDriveSpacePurgeOldest)
+    .then(endPrevDayStream)
+    .then(updateDayStream)
+    .then(updateLiveStream)
+    .then((prev)=>uploadFiles(prev, oot))
+    .then(saveState, saveState)
+    .catch((e)=>e?console.error(e):console.log(`skip`))
+    .finally(()=>console.log(`####################`)), ms))
+      .on("error", (e)=>console.error(e));
 };
 //init
 Promise.resolve()
