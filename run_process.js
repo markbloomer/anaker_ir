@@ -6,7 +6,7 @@ const basicFtp=require("basic-ftp");
 const en=require("./encrypt.js");
 //util
 const pad=(value, len, char='0', v=value.toString())=>len<=v.length?v:char+pad(v, len-1, char);
-const used=(sleep=0.25)=>{
+const used=(sleep)=>{
   const out=child.execSync(`${(sleep?`sleep ${sleep} && `:"")}df --output=pcent /`, "utf-8").toString();
   const usedStr=out.substring(out.indexOf("\n"), out.lastIndexOf("%")).trim();
   return Number(usedStr);
@@ -22,7 +22,7 @@ const timeout=(func, ms=30*1000, timeout=null)=>(...args)=>{
     .finally(()=>timeout=clearTimeout(timeout));
 };
 //const
-const maxUsed=90;
+const maxUsed=50;
 const ms=8000;
 const rawTsPath=`./raw_ts`;
 const rawM3uPath=`./raw_m3u8`;
@@ -43,21 +43,23 @@ const ftpOptions={
   secureOptions: { rejectUnauthorized: false }
 };
 const state={};
-const ftp=new basicFtp.Client(0);
+const ftp=new basicFtp.Client();
 //ftp.ftp.verbose=true;
 //tasks
 //read state; generate entries
 const readState=()=>{
-  if (!fs.existsSync(stateFilePath)) return Object.assign(state, { entries: [] });
-  const obj=JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
-  const entries=obj.entries.map(({ f, fd, fs, upr })=>createEntry
-                                ({ file: f, fileDuration: fd, fileSize: fs, uploadRemainSize: upr }));
+  console.log(`read state`);
+  let obj=null;
+  try { obj=JSON.parse(fs.readFileSync(stateFilePath, "utf8")); }
+  catch (e) { obj={ entries: [] }; }
+  const entries=obj.entries.map(({ f, fd, fs, ls })=>createEntry
+                                ({ file: f, fileDuration: fd, fileSize: fs, localStart: ls }));
   return Object.assign(state, { entries });
 };
 //save state
 const saveState=(prev)=>{
-  const entries=state.entries.map(({ file, fileDuration, fileSize, uploadRemainSize })=>
-                                  ({ f: file, fd: fileDuration, fs: fileSize, upr: uploadRemainSize }));
+  const entries=state.entries.map(({ file, fileDuration, fileSize, localStart })=>
+                                  ({ f: file, fd: fileDuration, fs: fileSize, ls: localStart }));
   fs.writeFileSync(stateFilePath, JSON.stringify({ entries }, null, 2), "utf8");
   return prev;
 };
@@ -66,13 +68,11 @@ const parseStreamEntry=()=>Promise.resolve()
   .then(()=>readLastLines.read(rawStreamFilePath, 5))
   .then((lines)=>new Promise((resolve, reject)=>{
     const [, fileDuration, file]=lines.match(/#EXTINF:(\d+\.\d+),\n(.+)\n(#EXT-X-ENDLIST\n)?/m)??[];
-    if (file) return resolve({ file, fileDuration, fileSize: 0, uploadRemainSize: 0 });
-    console.log(`none`);
-    reject();
+    return file?resolve({ file, fileDuration, fileSize: 0, localStart: 0 }):reject(console.log(`none`));
   }));
   //.catch((e)=>console.error(e));
 //extract date and time; init entry
-const createEntry=({ file, fileDuration, fileSize, uploadRemainSize })=>{
+const createEntry=({ file, fileDuration, fileSize, localStart })=>{
   const [, year, month, day, hour, minute]=file.match(/(\d+)\.(\d+)\.(\d+)_(\d+)\.(\d+)\.(\d+)\.(.+)/m);
   const dayFolder=`${year}/${month}.${day}`;
   const timeFolder=`${hour}.${minute.charAt(0)}0`;
@@ -84,7 +84,7 @@ const createEntry=({ file, fileDuration, fileSize, uploadRemainSize })=>{
     file,
     fileDuration,
     fileSize,
-    uploadRemainSize,
+    localStart,
     dayFolder,
     timeFolder,
     folder,
@@ -99,9 +99,9 @@ const createEntry=({ file, fileDuration, fileSize, uploadRemainSize })=>{
 const addCurrGetPrev=(curr)=>new Promise((resolve, reject)=>{
   const { entries }=state;
   const prev=entries.at(-1);
-  if (prev?.file===curr.file) return reject();
+  if (prev?.file===curr.file) return reject(console.log(`already added`));
   entries.push(curr);
-  console.log(JSON.stringify(curr, null, 2));
+  console.log(curr.file);
   return prev?resolve(prev):reject();
 });
 //make folder; move file
@@ -109,19 +109,21 @@ const makeFolderMoveFile=(prev)=>{
   const { file, folder, publicFilePath }=prev;
   fs.mkdirSync(`${publicPath}/${folder}`, { recursive: true });
   fs.renameSync(`${rawTsPath}/${file}`, publicFilePath);
-  prev.fileSize=prev.uploadRemainSize=fs.statSync(publicFilePath).size;
+  prev.fileSize=fs.statSync(publicFilePath).size;
   return prev;
 };
+//check drive space
+const checkDriveSpace=(prev)=>console.log(`${used()}% full`) || prev;
 //check drive space; purge oldest
 const checkDriveSpacePurgeOldest=(prev)=>{
-  const currUsed=used();
+  const currUsed=used(0.15);
   if (currUsed<=maxUsed) return prev;
   const entry=state.entries.shift();
   if (!entry) return prev;
   const { file, publicFilePath }=entry;
-  console.log(`delete ${file} (${currUsed}% of ${maxUsed}%)`);
+  console.log(`delete ${file}`);
   fs.unlinkSync(publicFilePath);
-  return prev;
+  return checkDriveSpacePurgeOldest(prev);
 };
 //update live stream
 const updateLiveStream=(prev)=>{
@@ -134,8 +136,8 @@ const endPrevDayStream=(prev)=>{
   const { dayPrevStreamFilePath }=prev;
   if (!fs.existsSync(dayPrevStreamFilePath)) return prev;
   return readLastLines.read(dayPrevStreamFilePath, 2)
-      .then((lines)=>lines.endsWith(streamEnd)?null:fs.appendFileSync(dayPrevStreamFilePath, streamEnd, "utf8"))
-      .then(()=>prev);
+    .then((lines)=>lines.endsWith(streamEnd)?null:fs.appendFileSync(dayPrevStreamFilePath, streamEnd, "utf8"))
+    .then(()=>prev);
 };
 //update day stream
 const updateDayStream=(prev)=>{
@@ -147,26 +149,38 @@ const updateDayStream=(prev)=>{
 };
 //copy public
 const copyPublic=()=>{
+  console.log(`copy public`);
   fs.cpSync(publicStaticPath, publicPath, { recursive: true });
 };
+//upload file
+const uploadFile=(prev)=>new Promise((resolve, reject)=>{
+  const { file, fileSize, localStart, folder, publicFilePath }=prev;
+  console.log(`uploading ${file}`);
+  const readStream=fs.createReadStream(publicFilePath)
+    .on("error", (e)=>console.log(`readStream error: ${e}`));
+  Promise.resolve()
+    //.then(()=>console.log(`size...`) || ftp.size(`/${folder}/${file}`))
+    //.then((size)=>console.log(`size: ${size}`))
+    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.localStart=bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
+    .then(()=>ftp.appendFrom(readStream, `/${folder}/${file}`, { localStart }))
+    .then(oot()).then(()=>ftp.trackProgress(), ()=>ftp.trackProgress())
+    //.then(()=>ftp.uploadFrom(readStream, `/${folder}/${file}`))
+    //.then(()=>ftp.uploadFrom(publicFilePath, `/${folder}/${file}`))
+    //.then(resolve, reject)
+    .then(()=>readStream.close(resolve), ()=>readStream.close())
+    .catch((e)=>e=="Error: User closed client during task"?reject():(console.error(e) || reject(e)));
+});
 //upload files
 const uploadFiles=(prev, oot=(x)=>x)=>new Promise((resolve, reject)=>{
-  const { file, fileSize, folder, dayFolder, publicFilePath, dayStreamFilePath }=prev;
+  const { fileSize, folder, dayFolder, dayStreamFilePath }=prev;
   return Promise.resolve()
     .then(oot()).then(()=>ftp.closed?(console.log(`reconnecting...`) || ftp.access(ftpOptions)):null)
     .then(oot()).then(()=>ftp.ensureDir(`/${folder}`))
     .then(oot()).then(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`))
     .then(oot()).then(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`))
     .then(oot()).then(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`))
-    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.uploadRemainSize=fileSize-bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
-    .then(oot()).then(()=>new Promise((resolve, reject)=>{
-      console.log(`uploading ${file}`);
-      const readStream=fs.createReadStream(publicFilePath)
-        .on("error", (e)=>console.log(`readStream error: ${e}`));
-      ftp.uploadFrom(readStream, `/${folder}/${file}`)
-        .then(()=>readStream.close(resolve))
-        .catch((e)=>e=="Error: User closed client during task"?reject():(console.error(e) || reject(e)));
-    }))
+    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.localStart=bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
+    .then(oot()).then(()=>uploadFile(prev))
     .then(oot()).then(()=>ftp.trackProgress(), ()=>ftp.trackProgress())
     .then(oot()).then(()=>console.log(`uploading done`) || resolve(prev))
     .catch((e)=>(e?console.error(e):console.error(`upload timeout`)) || reject());
@@ -175,7 +189,7 @@ const uploadFiles=(prev, oot=(x)=>x)=>new Promise((resolve, reject)=>{
 const watchStream=()=>{
   console.log(`watching ${rawStreamFilePath}`);
   fs.watchFile(rawStreamFilePath, { interval: 200 }, timeout((oot)=>Promise.resolve()
-    .then(()=>console.log(`####################...`))
+    .then(()=>console.log(`##############################...`))
     .then(parseStreamEntry)
     .then(createEntry)
     .then(addCurrGetPrev)
@@ -184,10 +198,11 @@ const watchStream=()=>{
     .then(endPrevDayStream)
     .then(updateDayStream)
     .then(updateLiveStream)
+    .then(checkDriveSpace)
     .then((prev)=>uploadFiles(prev, oot))
     .then(saveState, saveState)
     .catch((e)=>e?console.error(e):console.log(`skip`))
-    .finally(()=>console.log(`####################`)), ms))
+    .finally(()=>console.log(`##############################`)), ms))
       .on("error", (e)=>console.error(e));
 };
 //init

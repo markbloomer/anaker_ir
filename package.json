@@ -2,8 +2,6 @@
   "dependencies": {
     "basic-ftp": "^4.6.6",
     "ffmpeg": "^0.0.4",
-    "hls.js": "^1.1.5",
-    "read-last-lines": "^1.8.0",
-    "serialport-gsm": "^4.0.1"
+    "read-last-lines": "^1.8.0"
   }
 }

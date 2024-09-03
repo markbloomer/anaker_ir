@@ -1,0 +1,13 @@
+[Unit]
+Description=anaker_ir_process
+After=multi-user.target
+
+[Service]
+Restart=always
+User=pi
+WorkingDirectory=/home/pi/anaker_ir
+ExecStartPre=/bin/sleep 10
+ExecStart=/home/pi/anaker_ir/run_process.sh
+
+[Install]
+WantedBy=multi-user.target

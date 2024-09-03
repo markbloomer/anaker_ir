@@ -1,0 +1,13 @@
+[Unit]
+Description=anaker_ir_check_restart
+After=multi-user.target
+
+[Service]
+Restart=always
+User=pi
+WorkingDirectory=/home/pi/anaker_ir
+ExecStartPre=/bin/sleep 60
+ExecStart=/home/pi/anaker_ir/check_restart.sh
+
+[Install]
+WantedBy=multi-user.target

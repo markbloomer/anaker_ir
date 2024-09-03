@@ -1,10 +1,11 @@
 #!/bin/sh
 clear
-rm -rf ./raw_m3u8/* ./raw_ts/* ./public/*
+rm -rf ./raw_m3u8/* ./raw_ts/*
+#
 libcamera-vid \
   --tuning-file /usr/share/libcamera/ipa/rpi/vc4/imx219_noir.json \
   --nopreview \
-  --timeout 0 \
+  --timeout 14400000 \
   --width 1280 \
   --height 1024 \
   -o - \
@@ -19,6 +20,8 @@ libcamera-vid \
   -segment_list_type m3u8 \
   -strftime 1 \
   ./raw_ts/%Y.%m.%d_%H.%M.%S.ts
+
+# 2>> ./logs/run_record.log
 
 #-vf "drawtext=text=this is a \\\\\\'string\\\\\\'\\\\: may contain one\\, or more\\, special characters" \
 #-map 0:0 \

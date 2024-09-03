@@ -3,12 +3,10 @@
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <video id="video" width="900" height="720" controls autoplay muted></video>
     <script>
-      var video = document.getElementById("video");
-      var videoSrc = "http://localhost:8999/stream.m3u8";
       if (Hls.isSupported()) {
-        var hls = new Hls();
-        hls.loadSource(videoSrc);
-        hls.attachMedia(video);
+        var hls=new Hls();
+        hls.loadSource("http://localhost:8999/stream.m3u8");
+        hls.attachMedia(document.getElementById("video"));
       }
     </script>
   </body>
