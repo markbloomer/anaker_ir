@@ -18,9 +18,11 @@ const timeout=(func, ms=30*1000, timeout=null)=>(...args)=>{
   const oot=(task=(x)=>x)=>(x)=>isExpired?Promise.resolve(x).then(task).then(()=>Promise.reject()):Promise.resolve(x);
   return Promise.resolve()
     .then(()=>func(oot, ...args))
-    .catch((e)=>e?console.error(e):null)
+    .catch((e)=>console.error(e))
     .finally(()=>timeout=clearTimeout(timeout));
 };
+const promise=(ms, f)=>new Promise((y)=>ms?!setTimeout(()=>y(f()), ms):y(f()));
+const sequence=(a, ms=0, i=0)=>i<a.length?promise(i?ms:0, ()=>a[i]().then(()=>sequence(a, ms, i+1))):Promise.resolve();
 //const
 const maxUsed=50;
 const ms=8000;
@@ -52,14 +54,14 @@ const readState=()=>{
   let obj=null;
   try { obj=JSON.parse(fs.readFileSync(stateFilePath, "utf8")); }
   catch (e) { obj={ entries: [] }; }
-  const entries=obj.entries.map(({ f, fd, fs, ls })=>createEntry
-                                ({ file: f, fileDuration: fd, fileSize: fs, localStart: ls }));
+  const entries=obj.entries.map(({ f, fd, fs, ur })=>
+                     createEntry({ file: f, fileDuration: fd, fileSize: fs, uploadRemain: ur }));
   return Object.assign(state, { entries });
 };
 //save state
 const saveState=(prev)=>{
-  const entries=state.entries.map(({ file, fileDuration, fileSize, localStart })=>
-                                  ({ f: file, fd: fileDuration, fs: fileSize, ls: localStart }));
+  const entries=state.entries.map(({ file, fileDuration, fileSize, uploadRemain })=>
+                                  ({ f: file, fd: fileDuration, fs: fileSize, ur: uploadRemain }));
   fs.writeFileSync(stateFilePath, JSON.stringify({ entries }, null, 2), "utf8");
   return prev;
 };
@@ -68,11 +70,11 @@ const parseStreamEntry=()=>Promise.resolve()
   .then(()=>readLastLines.read(rawStreamFilePath, 5))
   .then((lines)=>new Promise((resolve, reject)=>{
     const [, fileDuration, file]=lines.match(/#EXTINF:(\d+\.\d+),\n(.+)\n(#EXT-X-ENDLIST\n)?/m)??[];
-    return file?resolve({ file, fileDuration, fileSize: 0, localStart: 0 }):reject(console.log(`none`));
+    return file?resolve({ file, fileDuration, fileSize: 0, uploadRemain: 0 }):reject(console.log(`none`));
   }));
   //.catch((e)=>console.error(e));
 //extract date and time; init entry
-const createEntry=({ file, fileDuration, fileSize, localStart })=>{
+const createEntry=({ file, fileDuration, fileSize, uploadRemain })=>{
   const [, year, month, day, hour, minute]=file.match(/(\d+)\.(\d+)\.(\d+)_(\d+)\.(\d+)\.(\d+)\.(.+)/m);
   const dayFolder=`${year}/${month}.${day}`;
   const timeFolder=`${hour}.${minute.charAt(0)}0`;
@@ -84,7 +86,7 @@ const createEntry=({ file, fileDuration, fileSize, localStart })=>{
     file,
     fileDuration,
     fileSize,
-    localStart,
+    uploadRemain,
     dayFolder,
     timeFolder,
     folder,
@@ -109,7 +111,7 @@ const makeFolderMoveFile=(prev)=>{
   const { file, folder, publicFilePath }=prev;
   fs.mkdirSync(`${publicPath}/${folder}`, { recursive: true });
   fs.renameSync(`${rawTsPath}/${file}`, publicFilePath);
-  prev.fileSize=fs.statSync(publicFilePath).size;
+  prev.fileSize=prev.uploadRemain=fs.statSync(publicFilePath).size;
   return prev;
 };
 //check drive space
@@ -120,9 +122,11 @@ const checkDriveSpacePurgeOldest=(prev)=>{
   if (currUsed<=maxUsed) return prev;
   const entry=state.entries.shift();
   if (!entry) return prev;
-  const { file, publicFilePath }=entry;
+  const { file, folder, publicFilePath }=entry;
   console.log(`delete ${file}`);
   fs.unlinkSync(publicFilePath);
+  if (!fs.listSync(`/${folder}`).length)
+    fs.rmdirSync(`/${folder}`);
   return checkDriveSpacePurgeOldest(prev);
 };
 //update live stream
@@ -135,7 +139,8 @@ const updateLiveStream=(prev)=>{
 const endPrevDayStream=(prev)=>{
   const { dayPrevStreamFilePath }=prev;
   if (!fs.existsSync(dayPrevStreamFilePath)) return prev;
-  return readLastLines.read(dayPrevStreamFilePath, 2)
+  return Promise.resolve()
+    .then(()=>readLastLines.read(dayPrevStreamFilePath, 2))
     .then((lines)=>lines.endsWith(streamEnd)?null:fs.appendFileSync(dayPrevStreamFilePath, streamEnd, "utf8"))
     .then(()=>prev);
 };
@@ -152,38 +157,63 @@ const copyPublic=()=>{
   console.log(`copy public`);
   fs.cpSync(publicStaticPath, publicPath, { recursive: true });
 };
+//upload public
+const uploadPublic=()=>{
+  console.log(`uploading public`);
+  return Promise.resolve()
+    .then(()=>ftp.closed?(console.log(`connecting...`) || ftp.access(ftpOptions)):null)
+    .then(()=>console.log(`uploading favicon.ico`) || ftp.uploadFrom(`${publicPath}/favicon.ico`, `/favicon.ico`))
+    .then(()=>console.log(`uploading index.html`) || ftp.uploadFrom(`${publicPath}/index.html`, `/index.html`))
+    .catch((e)=>console.error(e));
+};
+//get file size
+const getRemoteFileSize=(folder, fileName)=>Promise.resolve()
+  .then(()=>ftp.list(`/${folder}`))
+  .then((files)=>files.find((f)=>f.name==fileName)?.size)
+  .catch((e)=>console.error(e));
 //upload file
-const uploadFile=(prev)=>new Promise((resolve, reject)=>{
-  const { file, fileSize, localStart, folder, publicFilePath }=prev;
-  console.log(`uploading ${file}`);
-  const readStream=fs.createReadStream(publicFilePath)
-    .on("error", (e)=>console.log(`readStream error: ${e}`));
+const uploadFile=(prev, oot)=>new Promise((resolve, reject)=>{
+  const { file, fileSize, folder, publicFilePath }=prev;
+  let readStream=null;//fs.createReadStream(publicFilePath).on("error", (e)=>console.log(`readStream error:`) || console.error(e));
   Promise.resolve()
-    //.then(()=>console.log(`size...`) || ftp.size(`/${folder}/${file}`))
-    //.then((size)=>console.log(`size: ${size}`))
-    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.localStart=bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
-    .then(()=>ftp.appendFrom(readStream, `/${folder}/${file}`, { localStart }))
-    .then(oot()).then(()=>ftp.trackProgress(), ()=>ftp.trackProgress())
-    //.then(()=>ftp.uploadFrom(readStream, `/${folder}/${file}`))
-    //.then(()=>ftp.uploadFrom(publicFilePath, `/${folder}/${file}`))
-    //.then(resolve, reject)
-    .then(()=>readStream.close(resolve), ()=>readStream.close())
-    .catch((e)=>e=="Error: User closed client during task"?reject():(console.error(e) || reject(e)));
+    .then(oot()).then(()=>console.log(`uploading ${file}`))
+    .then(oot()).then(()=>fs.createReadStream(publicFilePath)).then((rs)=>readStream=rs)
+    //.then(()=>ftp.features()).then((features)=>console.log(features))
+    //.then(oot()).then(()=>console.log(`cd /${folder}`) || ftp.cd(`/${folder}`))
+    //.then(oot()).then(()=>console.log(`stat...`) || ftp.send(`SIZE ${file}`)).then((size)=>console.log(size))
+    //.then(oot()).then(()=>console.log(`size`) || ftp.size(`/${folder}/${file}`)).then((size)=>console.log(size))
+    .then(oot()).then(()=>getRemoteFileSize(`/${folder}`, file)).then((size)=>prev.uploadRemain=fileSize-(size??0))
+    .then(oot()).then(()=>ftp.trackProgress(({ bytes: uploadedSize })=>{
+      console.log(`${pad((100*uploadedSize/fileSize)|0, 3, ' ')}% ${prev.uploadRemain=fileSize-uploadedSize}`);
+      oot(()=>ftp.close())().catch(()=>{});
+    }))
+    .then(oot()).then(()=>ftp.appendFrom(readStream, `/${folder}/${file}`, { localStart: fileSize-prev.uploadRemain }))
+    //.then(oot()).then(()=>console.log(`size`) || ftp.size(`/${folder}/${file}`)).then((size)=>console.log(size))
+    //.then(oot()).then(()=>console.log(`cd /`) || ftp.cd(`/`))
+    //.then(()=>readStream.close((e)=>e?.code=="ERR_STREAM_PREMATURE_CLOSE"?(console.log(`out of time - cancel`) || reject()):reject(e)):resolve()), ()=>readStream.close())
+    //.then(()=>readStream.close((e)=>(!e || e.code=="ERR_STREAM_PREMATURE_CLOSE")?resolve():console.error(e)), ()=>console.log(`reject readStream.close`) || readStream.close())
+    .then(()=>resolve(), ()=>console.log(`upload cancel`) || reject())
+    .catch((e)=>reject(e))
+    .finally(()=>ftp.trackProgress() || readStream.close());
+    //.catch((e)=>e=="Error: User closed client during task"?reject(console.log(`out of time - cancel`)):reject(e));
 });
 //upload files
 const uploadFiles=(prev, oot=(x)=>x)=>new Promise((resolve, reject)=>{
-  const { fileSize, folder, dayFolder, dayStreamFilePath }=prev;
+  const { folder, dayFolder, dayStreamFilePath }=prev;
+  // const uploadFileTasks=state.entries
+  //   .filter((x)=>x.fileSize>0 && x.uploadRemain>0)
+  //   .slice(-10)
+  //   .reverse()
+  //   .map((x)=>()=>uploadFile(x, oot));
   return Promise.resolve()
     .then(oot()).then(()=>ftp.closed?(console.log(`reconnecting...`) || ftp.access(ftpOptions)):null)
     .then(oot()).then(()=>ftp.ensureDir(`/${folder}`))
     .then(oot()).then(()=>console.log(`uploading ${stateFile}`) || ftp.uploadFrom(stateFilePath, `/${stateFile}`))
     .then(oot()).then(()=>console.log(`uploading ${streamFile}`) || ftp.uploadFrom(liveStreamFilePath, `/${streamFile}`))
     .then(oot()).then(()=>console.log(`uploading ${streamFile} (day)`) || ftp.uploadFrom(dayStreamFilePath, `/${dayFolder}/${streamFile}`))
-    .then(oot()).then(()=>ftp.trackProgress(({ bytes })=>console.log(`${pad((100*bytes/fileSize)|0, 3, ' ')}% ${prev.localStart=bytes}`) || oot(()=>ftp.close())().catch(()=>{})))
-    .then(oot()).then(()=>uploadFile(prev))
-    .then(oot()).then(()=>ftp.trackProgress(), ()=>ftp.trackProgress())
+    .then(oot()).then(()=>uploadFile(prev, oot))//sequence(uploadFileTasks))
     .then(oot()).then(()=>console.log(`uploading done`) || resolve(prev))
-    .catch((e)=>(e?console.error(e):console.error(`upload timeout`)) || reject());
+    .catch((e)=>reject(e?.code=="ECONNRESET"?console.error(`upload cancel`):e));
 });
 //watch stream
 const watchStream=()=>{
@@ -201,13 +231,15 @@ const watchStream=()=>{
     .then(checkDriveSpace)
     .then((prev)=>uploadFiles(prev, oot))
     .then(saveState, saveState)
-    .catch((e)=>e?console.error(e):console.log(`skip`))
+    .catch((e)=>console.error(e))
     .finally(()=>console.log(`##############################`)), ms))
       .on("error", (e)=>console.error(e));
 };
 //init
 Promise.resolve()
   .then(copyPublic)
+  .then(uploadPublic)
   .then(readState)
   .then(watchStream)
-  .catch((e)=>e?console.error(e):null);
+  .catch((e)=>console.error(e))
+  .finally(()=>ftp.close());

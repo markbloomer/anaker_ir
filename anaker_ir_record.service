@@ -4,9 +4,8 @@ After=multi-user.target
 
 [Service]
 Restart=always
-User=pi
 WorkingDirectory=/home/pi/anaker_ir
-ExecStartPre=/bin/sleep 10
+ExecStartPre=/bin/sleep 15
 ExecStart=/home/pi/anaker_ir/run_record.sh
 
 [Install]
