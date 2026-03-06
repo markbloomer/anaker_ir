@@ -4,7 +4,7 @@ const _=module.exports={
   module: (f)=>({ m: _.m, k: ()=>f(_) }),
   async: (f, p=null, t=null)=>({
     on: ()=>{ p=new Promise((y, n)=>_.try(()=>t=_.t.time(1000, ()=>y()) && f(), y, n)); },
-    off: ()=>{ p?. }
+    off: ()=>{}
   }),
   bucket: (f)=>f(),
   grid: ()=>({}),
